@@ -1,108 +1,67 @@
-Michi --- Minimalistic Go MCTS Engine
-=====================================
+Nochi --- Minimalistic AlphaGoZero-like Engine
+==============================================
 
-Michi aims to be a minimalistic but full-fledged Computer Go program based
-on state-of-art methods (Monte Carlo Tree Search) and written in Python.
-Our goal is to make it easier for new people to enter the domain of
-Computer Go, peek under the hood of a "real" playing engine and be able
-to learn by hassle-free experiments - with the algorithms, add heuristics,
-etc.
+Nochi is a fork of the Michi minimalistic Computer Go engine that replaces
+Monte Carlo simulations with a Keras neural model.  It is an attempt to
+reproduce the AlphaGo Zero work on a small scale.
 
-The algorithm code size is 540 lines of code (without user interface, tables
-and empty lines / comments).  Currently, it can often win against GNUGo
-on 9×9 on an old i3 notebook, be about even with GNUGo on 15×15 on a modern
-higher end computer and about two stones weaker on 19×19 (spending no more
-than 30s per move).
+It is by no means as polished as Michi, but might still be useful as an
+inspiration.
 
-This is not meant to be a competitive engine; simplicity and clear code is
-preferred over optimization (after all, it's in Python!).  But compared to
-other minimalistic engines, this one should be able to beat beginner
-intermediate human players, and I believe that a *fast* implementation
-of exactly the same heuristics would be around 4k KGS or even better.
+This is a truly "zero-knowledge" system like AlphaGo zero, but it's
+not entirely 1:1, I did some tweaks which I thought might help early
+convergence:
 
-Michi is distributed under the MIT licence.  Now go forth, hack and peruse!
+  * AlphaGo used 19 resnet layers for 19x19, so I used 7 layers.
+  * The neural network is updated after _every_ game, _twice_, on _all_
+    positions plus 64 randomly sampled positions from entire history,
+    this all done four times - on original position and various
+    symmetry flips (but I was too lazy to implement 90\deg rotation).
+  * Instead of supplying last 8 positions on input of the network,
+    I feed just the last position plus two indicator matrices showing
+    the location of the last and second-to-last move.
+  * No symmetry pruning during tree search.
+  * Value function is trained with cross-entropy rather than MSE.
+  * No resign auto-threshold but it is important to play 25% games
+    without resigning to escale local "optima".
+  * 1/Temperature is 2 for first three moves.
+  * It uses a different number of simulations per move.
+
+It has been verified to be able to get near GNUGo level in ~2 weeks (8500
+games, 6 threads + 1x Tesla M60) on 7x7.  Not terribly great but it clearly
+does something.
+
+Nochi is distributed under the MIT licence.  Now go forth, hack and peruse!
 
 Usage
 -----
 
-If you want to try it out, just start the script.  You can also pass the
-gtp argument and start it in gogui, or let it play GNUGo:
+First, decide on the board size and edit the N parameter at the script
+beginning.  N=19 is the default but you may want to use e.g. N=7.
 
-	gogui/bin/gogui-twogtp -black './michi.py gtp' -white 'gnugo --mode=gtp --chinese-rules --capture-all-dead' -size 9 -komi 7.5 -verbose -auto
+To start training,
 
-It is *highly* recommended that you download Michi large-scale pattern files
-(patterns.prob, patterns.spat):
+	python ./michi.py selfplay
 
-	http://pachi.or.cz/michi-pat/
+which will autogenerate a run id and make periodical snapshot (the numbers
+should be multiplied by thread count to get true number of games played).  To
+resume in any mode (e.g. even start gameio or gtp), add the id as a parameter:
 
-Store and unpack them in the current directory for Michi to find.
+	python ./michi.py selfplay G171107T013304_000000150
 
-Understanding and Hacking
--------------------------
+To play, you can e.g. pass the gtp argument and start it in gogui, or let it
+play a bunch of games with GNUGo:
 
-Note that while all strong Computer Go programs currently use the MCTS
-algorithm, there are many particular variants, differing particularly
-regarding the playout policy mechanics and the way tree node priors
-are constructed and incorporated (this is not about individual heuristics
-but the way they are integrated).  Michi uses the MCTS flavor used in
-Pachi and Fuego, but e.g. Zen and CrazyStone take quite a different
-approach to this.  For a general introduction to Michi-style MCTS algorithm,
-see Petr Baudis' Master Thesis http://pasky.or.cz/go/prace.pdf, esp.
-Sec. 2.1 to 2.3 and Sec. 3.3 to 3.4.
+	gogui-1.4.9/bin/gogui-twogtp -black 'python ./michi.py gtp G171107T013304_000000150' -white 'gnugo --mode=gtp --chinese-rules --capture-all-dead' -size 7 -komi 7.5 -verbose -auto -alternate -games 20 -sgffile x
 
-The ethymology of Michi is "Minimalistic Pachi".  If you would like
-to try your hands at hacking a competitive Computer Go engine, try Pachi! :-)
-Michi has been inspired by Sunfish - a minimalistic chess engine.  Sadly
-(or happily?), for computers Go is a lot more complicated than chess, even
-if you want to just implement the rules.
+Nochi also supports supervised training:
 
-We would like to encourage you to experiment with the heuristics and try
-to add more.  But please realize that if some heuristic seems to work well,
-you should verify how it works in a more competitive engine (in conjunction
-with other heuristics and many more playouts) and play-test it on at least
-a few hundred games with a reference opponent (not just the program without
-the heuristic, self-play testing greatly exaggerates any improvements).
+	while true; do find GoGoD-2008-Winter-Database/ -name '*.sgf' | shuf; done | python ./michi.py replay_train
 
-TODO
-----
+To mix value supervision with actual MCTS training signal for positional
+output, use smt. like:
 
-Strong Computer Go programs tend to accumulate many specialized,
-sophisticated, individually low-yield heuristics.  These are mostly
-out of scope of Michi in order to keep things short and simple.
-However, other than that, there are certainly things that Michi should
-or could contain, roughly in order of priority:
+	while true; do find GoGoD-2008-Winter-Database/ -name '*.sgf' | shuf; done | python ./michi.py replay_traindist G171107T224743_R000030000
 
-  * Superko support.
-  * Support for early passing and GTP stone status protocol.
-  * gogui visualization support.
-  * Group/liberty tracking in the board position implementation.
-
-If you would like to increase the strength of the program, the lowest
-hanging fruit is likely:
-
-  * Tune parameters using Rémi Coulom's CLOP.
-  * Simple time management.  (See the Pachi paper.)
-  * Pondering (search game tree during opponent's move) support.
-  * Make it faster - either by optimizations (see group tracking above)
-    or 1:1 rewrite in a faster language.
-  * Two/three liberty semeai reading in playouts.  (See also CFG patterns.)
-  * Tsumego improvements - allow single-stone selfatari only for throwins
-    and detect nakade shapes.
-  * Try true probability distribution playouts + Rémi Coulom's MM patterns.
-
-(Most of the mistakes Michi makes is caused by the awfully low number of
-playouts; I believe that with 20× speedup, which seems very realistic, the same
-algorithm could easily get to KGS 4k on 19×19.  One of the things I would hope
-to inspire is rewrite of the same algorithm in different, faster programming
-languages; hopefully seeing a done real-world thing is easier than developing
-it from scratch.  What about a Go engine in the Go language?)
-
-**michi-c** is such a rewrite of Michi, in plain C.  It seems to play even with
-GNUGo when given 3.3s/move: https://github.com/db3108/michi-c2.
-
-Note: there is a clone version of the michi python code (slower than michi-c2) 
-that is available at https://github.com/db3108/michi-c. 
-This simpler version can be read in parallel with the michi.py python code.
-
-**michi-go** is a rewrite of Michi in the Go language:
-https://github.com/traveller42/michi-go
+You can freely switch between selfplay, supervised and supervised+MCTS using
+snapshots, they are compatible.
