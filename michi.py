@@ -34,6 +34,7 @@ from multiprocessing.pool import Pool
 import numpy as np
 import random
 import re
+from six.moves import input
 import sys
 import time
 
@@ -80,7 +81,7 @@ def board_put(board, c, p):
 def floodfill(board, c):
     """ replace continuous-color area starting at c with special color # """
     # This is called so much that a bytearray is worthwhile...
-    byteboard = bytearray(board)
+    byteboard = bytearray(board, 'utf-8')
     p = byteboard[c]
     byteboard[c] = ord('#')
     fringe = [c]
@@ -90,7 +91,7 @@ def floodfill(board, c):
             if byteboard[d] == p:
                 byteboard[d] = ord('#')
                 fringe.append(d)
-    return str(byteboard)
+    return byteboard.decode('utf-8')
 
 
 # Regex that matches various kind of points adjecent to '#' (floodfilled) points
@@ -424,7 +425,8 @@ class TreeNode():
     pv, pw are prior values (node value = w/v + pw/pv)
     av, aw are amaf values ("all moves as first", used for the RAVE tree policy)
     children is None for leaf nodes """
-    def __init__(self, pos):
+    def __init__(self, net, pos):
+        self.net = net
         self.pos = pos
         self.v = 0
         self.w = 0
@@ -436,15 +438,14 @@ class TreeNode():
 
     def expand(self):
         """ add and initialize children to a leaf node """
-        distribution = net.predict_distribution(self.pos)
+        distribution = self.net.predict_distribution(self.pos)
         self.children = []
         for c in self.pos.moves(0):
             pos2 = self.pos.move(c)
             if pos2 is None:
                 continue
-            node = TreeNode(pos2)
+            node = TreeNode(self.net, pos2)
             self.children.append(node)
-
             x, y = c % W - 1, c // W - 1
             value = distribution[y * N + x]
 
@@ -459,7 +460,7 @@ class TreeNode():
             can_pass = self.pos.score() >= 0
 
         if can_pass:
-            node = TreeNode(self.pos.pass_move())
+            node = TreeNode(self.net, self.pos.pass_move())
             self.children.append(node)
             node.pv = PRIOR_NET
             node.pw = PRIOR_NET * distribution[-1]
@@ -587,7 +588,7 @@ def tree_search(tree, n, owner_map, disp=False, debug_disp=False):
         if last_node.pos.last is None and last_node.pos.last2 is None:
             score = 1 if last_node.pos.score() > 0 else -1
         else:
-            score = net.predict_winrate(last_node.pos)
+            score = tree.net.predict_winrate(last_node.pos)
 
         tree_update(nodes, amaf_map, score, disp=debug_disp)
 
@@ -647,7 +648,7 @@ def dump_subtree(node, thres=N_SIMS/50, indent=0, f=sys.stderr, recurse=True):
           (indent*' ', str_coord(node.pos.last), node.winrate(),
            node.w, node.v, node.pw, node.pv, node.aw, node.av,
            float(node.aw)/node.av if node.av > 0 else float('nan'),
-           float(-net.predict_winrate(node.pos) + 1) / 2), file=f)
+           float(-node.net.predict_winrate(node.pos) + 1) / 2), file=f)
     if not recurse or not node.children:
         return
     for child in sorted(node.children, key=lambda n: n.v, reverse=True):
@@ -662,7 +663,7 @@ def print_tree_summary(tree, sims, f=sys.stderr):
     while node is not None:
         best_seq.append(node.pos.last)
         node = node.best_move()
-    best_predwinrate = float(-net.predict_winrate(best_nodes[0].pos) + 1) / 2
+    best_predwinrate = float(-tree.net.predict_winrate(best_nodes[0].pos) + 1) / 2
     print('[%4d] winrate %.3f/%.3f | seq %s | can %s' %
           (sims, best_nodes[0].winrate(), best_predwinrate, ' '.join([str_coord(c) for c in best_seq[1:6]]),
            ' '.join(['%s(%.3f|%d/%.3f)' % (str_coord(n.pos.last), n.winrate(), n.v, n.prior()) for n in best_nodes])), file=f)
@@ -683,11 +684,11 @@ def str_coord(c):
 
 # various main programs
 
-def play_and_train(i, batches_per_game=2, disp=False):
+def play_and_train(net, i, batches_per_game=2, disp=False):
     positions = []
 
     allow_resign = i > 25 and np.random.rand() < P_ALLOW_RESIGN
-    tree = TreeNode(pos=empty_position())
+    tree = TreeNode(net=net, pos=empty_position())
     tree.expand()
     owner_map = W*W*[0]
     while True:
@@ -749,13 +750,13 @@ def play_and_train(i, batches_per_game=2, disp=False):
     # TODO 90\deg rot
 
 
-def selfplay_singlethread(worker_id, disp=False, snapshot_interval=25):
+def selfplay_singlethread(net, worker_id, disp=False, snapshot_interval=25):
     net.ri = worker_id
 
     i = 0
     while True:
         print('[%d] Self-play of game #%d ...' % (worker_id, i,))
-        play_and_train(i, disp=disp)
+        play_and_train(net, i, disp=disp)
         i += 1
         if snapshot_interval and i % snapshot_interval == 0:
             snapshot_id = '%s_%09d' % (net.model_name(), i)
@@ -763,17 +764,17 @@ def selfplay_singlethread(worker_id, disp=False, snapshot_interval=25):
             net.save(snapshot_id)
 
 
-def selfplay(disp=True):
+def selfplay(net, disp=True):
     n_workers = multiprocessing.cpu_count()
 
     # group up parallel predict requests
     net.stash_size(max(n_workers - 1, 1))
 
     # First process is verbose and snapshots the model
-    processes = [Process(target=selfplay_singlethread, kwargs=dict(worker_id=0, disp=disp))]
+    processes = [Process(target=selfplay_singlethread, kwargs=dict(net=net, worker_id=0, disp=disp))]
     # The rest work silently
     for i in range(1, n_workers):
-        processes.append(Process(target=selfplay_singlethread, kwargs=dict(worker_id=i, snapshot_interval=None)))
+        processes.append(Process(target=selfplay_singlethread, kwargs=dict(net=net, worker_id=i, snapshot_interval=None)))
 
     for p in processes:
         p.start()
@@ -819,10 +820,10 @@ def gather_positions(filename, subsample=16):
     return (flipped, score)
 
 
-def position_dist(worker_id, pos, disp=False):
+def position_dist(net, worker_id, pos, disp=False):
     net.ri = worker_id
 
-    tree = TreeNode(pos=pos)
+    tree = TreeNode(net=net, pos=pos)
     tree.expand()
     owner_map = W*W*[0]
     tree_search(tree, N_SIMS, owner_map, disp=disp)
@@ -840,7 +841,7 @@ def position_distnext(pos):
     return distribution
 
 
-def replay_train(snapshot_interval=500, continuous_predict=False, disp=True):
+def replay_train(net, snapshot_interval=500, continuous_predict=False, disp=True):
     n_workers = multiprocessing.cpu_count()
     # group up parallel predict requests
     # net.stash_size(max(2, 1))  # XXX not all workers will always be busy
@@ -877,17 +878,17 @@ def replay_train(snapshot_interval=500, continuous_predict=False, disp=True):
     net.save(snapshot_id)
 
 
-def game_io(computer_black=False):
+def game_io(net, computer_black=False):
     """ A simple minimalistic text mode UI. """
 
-    tree = TreeNode(pos=empty_position())
+    tree = TreeNode(net=net, pos=empty_position())
     tree.expand()
     owner_map = W*W*[0]
     while True:
         if not (tree.pos.n == 0 and computer_black):
             print_pos(tree.pos, sys.stdout, owner_map)
 
-            sc = raw_input("Your move: ")
+            sc = input("Your move: ")
             c = parse_coord(sc)
             if c is not None:
                 # Not a pass
@@ -896,7 +897,7 @@ def game_io(computer_black=False):
                     continue
 
                 # Find the next node in the game tree and proceed there
-                nodes = filter(lambda n: n.pos.last == c, tree.children)
+                nodes = list(filter(lambda n: n.pos.last == c, tree.children))
                 if not nodes:
                     print('Bad move (rule violation)')
                     continue
@@ -907,7 +908,7 @@ def game_io(computer_black=False):
                 if tree.children[0].pos.last is None:
                     tree = tree.children[0]
                 else:
-                    tree = TreeNode(pos=tree.pos.pass_move())
+                    tree = TreeNode(net=net, pos=tree.pos.pass_move())
 
             print_pos(tree.pos)
 
@@ -925,7 +926,7 @@ def game_io(computer_black=False):
     print('Thank you for the game!')
 
 
-def gtp_io():
+def gtp_io(net):
     """ GTP interface for our program.  We can play only on the board size
     which is configured (N), and we ignore color information and assume
     alternating play! """
@@ -933,12 +934,12 @@ def gtp_io():
                       'final_score', 'quit', 'name', 'version', 'known_command',
                       'list_commands', 'protocol_version', 'tsdebug']
 
-    tree = TreeNode(pos=empty_position())
+    tree = TreeNode(net=net, pos=empty_position())
     tree.expand()
 
     while True:
         try:
-            line = raw_input().strip()
+            line = input().strip()
         except EOFError:
             break
         if line == '':
@@ -956,7 +957,7 @@ def gtp_io():
                 print("Warning: Trying to set incompatible boardsize %s (!= %d)" % (command[1], N), file=sys.stderr)
                 ret = None
         elif command[0] == "clear_board":
-            tree = TreeNode(pos=empty_position())
+            tree = TreeNode(net=net, pos=empty_position())
             tree.expand()
         elif command[0] == "komi":
             # XXX: can we do this nicer
@@ -968,17 +969,17 @@ def gtp_io():
             if c is not None:
                 # Find the next node in the game tree and proceed there
                 if tree.children is not None and filter(lambda n: n.pos.last == c, tree.children):
-                    tree = filter(lambda n: n.pos.last == c, tree.children)[0]
+                    tree = list(filter(lambda n: n.pos.last == c, tree.children))[0]
                 else:
                     # Several play commands in row, eye-filling move, etc.
-                    tree = TreeNode(pos=tree.pos.move(c))
+                    tree = TreeNode(net=net, pos=tree.pos.move(c))
 
             else:
                 # Pass move
                 if tree.children[0].pos.last is None:
                     tree = tree.children[0]
                 else:
-                    tree = TreeNode(pos=tree.pos.pass_move())
+                    tree = TreeNode(net=net, pos=tree.pos.pass_move())
         elif command[0] == "genmove":
             tree = tree_search(tree, N_SIMS, owner_map, disp=True)
             if tree.pos.last is None:
@@ -1025,32 +1026,31 @@ def gtp_io():
 
 
 if __name__ == "__main__":
-    global net
     net = GoModel(load_snapshot=sys.argv[2] if len(sys.argv) > 2 else None)
     if len(sys.argv) < 2 or sys.argv[1] == "black":
         # Default action
         while True:
-            game_io()
+            game_io(net)
     elif sys.argv[1] == "white":
         while True:
             game_io(computer_black=True)
     elif sys.argv[1] == "gtp":
-        gtp_io()
+        gtp_io(net)
     elif sys.argv[1] == "tsbenchmark":
         t_start = time.time()
-        print_pos(tree_search(TreeNode(pos=empty_position()), N_SIMS, W*W*[0], disp=False).pos)
+        print_pos(tree_search(TreeNode(net=net, pos=empty_position()), N_SIMS, W*W*[0], disp=False).pos)
         print('Tree search with %d playouts took %.3fs with %d threads; speed is %.3f playouts/thread/s' %
               (N_SIMS, time.time() - t_start, multiprocessing.cpu_count(),
                N_SIMS / ((time.time() - t_start) * multiprocessing.cpu_count())))
     elif sys.argv[1] == "tsdebug":
-        print_pos(tree_search(TreeNode(pos=empty_position()), N_SIMS, W*W*[0], disp=True).pos)
+        print_pos(tree_search(TreeNode(net=net, pos=empty_position()), N_SIMS, W*W*[0], disp=True).pos)
     elif sys.argv[1] == "selfplay":
-        selfplay()
+        selfplay(net)
     elif sys.argv[1] == "replay_train":
         # find GoGoD-2008-Winter-Database/ -name '*.sgf' | shuf | python ./michi.py replay_train
-        replay_train()
+        replay_train(net)
     elif sys.argv[1] == "replay_traindist":
-        replay_train(continuous_predict=True)
+        replay_train(net, continuous_predict=True)
     else:
         print('Unknown action', file=sys.stderr)
 
