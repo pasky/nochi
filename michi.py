@@ -38,6 +38,10 @@ from six.moves import input
 import sys
 import time
 
+try:
+    raw_input          # Python 2
+except NameError:
+    raw_input = input  # Python 3
 
 # Given a board of size NxN (N=9, 19, ...), we represent the position
 # as an (N+1)*(N+2) string, with '.' (empty), 'X' (to-play player),
