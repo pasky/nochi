@@ -70,7 +70,6 @@ class ResNet(object):
         x = Activation('relu')(x)
 
         x = add([x, input_tensor])
-        x = Activation('relu')(x)
         return x
 
 
