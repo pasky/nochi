@@ -49,11 +49,11 @@ W = N + 2
 empty = "\n".join([(N+1)*' '] + N*[' '+N*'.'] + [(N+2)*' '])
 colstr = 'ABCDEFGHJKLMNOPQRST'
 
-N_SIMS = 1000
+N_SIMS = 800
 PUCT_C = 0.1
 PROPORTIONAL_STAGE = 3
 TEMPERATURE = 2
-P_ALLOW_RESIGN = 0.75
+P_ALLOW_RESIGN = 0.8
 RAVE_EQUIV = 100
 EXPAND_VISITS = 1
 PRIOR_EVEN = 4  # should be even number; 0.5 prior
@@ -687,7 +687,7 @@ def str_coord(c):
 def play_and_train(net, i, batches_per_game=2, disp=False):
     positions = []
 
-    allow_resign = i > 25 and np.random.rand() < P_ALLOW_RESIGN
+    allow_resign = i > 10 and np.random.rand() < P_ALLOW_RESIGN
     tree = TreeNode(net=net, pos=empty_position())
     tree.expand()
     owner_map = W*W*[0]
