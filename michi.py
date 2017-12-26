@@ -362,6 +362,7 @@ class ModelServer(Process):
                     self.stash = []
 
             stash = PredictStash(1, self.res_queues)
+            fit_counter = 0
 
             while True:
                 cmd, args, ri = self.cmd_queue.get()
@@ -370,6 +371,9 @@ class ModelServer(Process):
                     stash.trigger = args['stash_size']
                 elif cmd == 'fit_game':
                     stash.process()
+                    print('\rFit %d...' % (fit_counter,), end='')
+                    sys.stdout.flush()
+                    fit_counter += 1
                     net.fit_game(**args)
                 elif cmd == 'predict_distribution':
                     stash.add(0, args['X_position'], ri)
@@ -776,7 +780,7 @@ def selfplay_singlethread(net, worker_id, disp=False, snapshot_interval=25):
 
     i = 0
     while True:
-        print('[%d] Self-play of game #%d ...' % (worker_id, i,))
+        print('[%d %d] Self-play of game #%d ...' % (worker_id, time.time(), i,))
         play_and_train(net, i, disp=disp)
         i += 1
         if snapshot_interval and i % snapshot_interval == 0:
@@ -786,10 +790,10 @@ def selfplay_singlethread(net, worker_id, disp=False, snapshot_interval=25):
 
 
 def selfplay(net, disp=True):
-    n_workers = multiprocessing.cpu_count()
+    n_workers = multiprocessing.cpu_count() * 6
 
     # group up parallel predict requests
-    net.stash_size(max(n_workers - 1, 1))
+    net.stash_size(max(multiprocessing.cpu_count(), 1))
 
     # First process is verbose and snapshots the model
     processes = [Process(target=selfplay_singlethread, kwargs=dict(net=net, worker_id=0, disp=disp))]
