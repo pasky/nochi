@@ -10,6 +10,7 @@ from keras.models import Model
 from keras.layers import Activation, BatchNormalization, Dense, Flatten, Input, Reshape
 from keras.layers.convolutional import Conv2D
 from keras.layers.merge import add
+from keras.optimizers import Adam
 
 
 ############################
@@ -76,7 +77,7 @@ class ResNet(object):
 class AGZeroModel:
     def __init__(self, N, batch_size=32, archive_fit_samples=64):
         self.N = N
-        self.batch_size = 32
+        self.batch_size = batch_size
 
         self.archive_fit_samples = archive_fit_samples
         self.position_archive = []
@@ -107,7 +108,7 @@ class AGZeroModel:
         res = Dense(1, activation='sigmoid', name='result')(res)
 
         self.model = Model(position, [dist, res])
-        self.model.compile('adam', ['categorical_crossentropy', 'binary_crossentropy'])
+        self.model.compile(Adam(lr=2e-2), ['categorical_crossentropy', 'binary_crossentropy'])
         self.model.summary()
 
     def fit_game(self, X_positions, result):
