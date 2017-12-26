@@ -466,6 +466,7 @@ class TreeNode():
             node.pw = PRIOR_NET * distribution[-1]
 
     def puct_urgency(self, n0):
+        # XXX: This is substituted by global_puct_urgency()
         expectation = float(self.w + PRIOR_EVEN/2) / (self.v + PRIOR_EVEN)
         try:
             prior = float(self.pw) / self.pv
@@ -515,11 +516,28 @@ class TreeNode():
         return distribution
 
 
+def puct_urgency_input(nodes):
+    w = np.array([float(n.w) for n in nodes])
+    v = np.array([float(n.v) for n in nodes])
+    pw = np.array([float(n.pw) if n.pv > 0 else 1. for n in nodes])
+    pv = np.array([float(n.pv) if n.pv > 0 else 10. for n in nodes])
+    return w, v, pw, pv
+
+
+def global_puct_urgency(n0, w, v, pw, pv):
+    # Like Node.puct_urgency(), but for all children, more quickly.
+    # Expects numpy arrays (except n0 which is scalar).
+    expectation = (w + PRIOR_EVEN/2) / (v + PRIOR_EVEN)
+    prior = pw / pv
+    return expectation + PUCT_C * prior * math.sqrt(n0) / (1 + v)
+
+
 def tree_descend(tree, amaf_map, disp=False):
     """ Descend through the tree to a leaf """
     tree.v += 1
     nodes = [tree]
     passes = 0
+    root = True
     while nodes[-1].children is not None and passes < 2:
         if disp:  print_pos(nodes[-1].pos)
 
@@ -529,8 +547,11 @@ def tree_descend(tree, amaf_map, disp=False):
             for c in children:
                 dump_subtree(c, recurse=False)
         random.shuffle(children)  # randomize the max in case of equal urgency
-        dirichlet = np.random.dirichlet((0.03,1), len(children))
-        urgencies = [node.puct_urgency(nodes[-1].v)*0.75 + 0.25*dir[0] for node, dir in zip(children, dirichlet)]
+        urgencies = global_puct_urgency(nodes[-1].v, *puct_urgency_input(children))
+        if root:
+            dirichlet = np.random.dirichlet((0.03,1), len(children))
+            urgencies = urgencies*0.75 + dirichlet[:,0]*0.25
+            root = False
         node = max(zip(children, urgencies), key=lambda t: t[1])[0]
         nodes.append(node)
 
